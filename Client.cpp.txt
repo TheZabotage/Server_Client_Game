@@ -1,0 +1,89 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstring>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+struct ScoreData {
+    std::string name;
+    int highscore;
+};
+
+// Function to read name and highscore from a file
+bool readScoreFromFile(const std::string& filename, ScoreData& scoreData) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Error opening file: " << filename << std::endl;
+        return false;
+    }
+
+    // Read name and highscore from the file
+    if (!(file >> scoreData.name >> scoreData.highscore)) {
+        std::cerr << "Error reading data from file: " << filename << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+int main() {
+    // Server information
+    const char* serverAddress = "127.0.0.1";
+    const int serverPort = 8080;
+
+    // Create a socket
+    int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSocket == -1) {
+        perror("Error creating socket");
+        return 1;
+    }
+
+    // Set up server address structure
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverPort);
+
+    // Convert server address from text to binary form
+    if (inet_pton(AF_INET, serverAddress, &serverAddr.sin_addr) <= 0) {
+        perror("Error converting address");
+        close(clientSocket);
+        return 1;
+    }
+
+    // Connect to the server
+    if (connect(clientSocket, reinterpret_cast<struct sockaddr*>(&serverAddr), sizeof(serverAddr)) == -1) {
+        perror("Error connecting to server");
+        close(clientSocket);
+        return 1;
+    }
+
+    ScoreData scoreData;
+    // Read name and highscore from a file
+    if (!readScoreFromFile("score.txt", scoreData)) {
+        close(clientSocket);
+        return 1;
+    }
+
+    // Create an HTTP POST request message
+    std::stringstream message;
+    message << "POST / HTTP/1.1\r\n";
+    message << "Content-Type: application/json\r\n";
+    message << "Content-Length: " << scoreData.name.size() + sizeof(scoreData.highscore) + 1 << "\r\n";
+    message << "\r\n";
+    message << scoreData.name << " " << scoreData.highscore;
+
+    // Send the HTTP POST request to the server
+    if (send(clientSocket, message.str().c_str(), message.str().size(), 0) == -1) {
+        perror("Error sending data to server");
+        close(clientSocket);
+        return 1;
+    }
+
+    std::cout << "Data sent to server." << std::endl;
+
+    // Close the socket
+    close(clientSocket);
+
+    return 0;
+}

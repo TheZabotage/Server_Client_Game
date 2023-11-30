@@ -1,0 +1,87 @@
+#include <iostream>
+#include <restinio/all.hpp>
+#include <json_dto/pub.hpp>
+
+struct ScoreData {
+    std::string name;
+    int highscore;
+};
+
+using score_collection = std::vector<ScoreData>;
+namespace rr = restinio::router;
+using router_t = rr::express_router_t<>;
+
+class score_handler_t {
+public:
+    explicit score_handler_t(score_collection& scores) : m_scores(scores) {}
+
+    auto on_new_score(const restinio::request_handle_t& req, rr::route_params_t params) {
+        auto resp = init_resp(req->create_response());
+
+        try {
+            auto newScoreData = json_dto::from_json<ScoreData>(req->body());
+            m_scores.emplace_back(std::move(newScoreData));
+            resp.set_body(json_dto::to_json(newScoreData));
+        } catch (const std::exception& ex) {
+            mark_as_bad_request(resp);
+        }
+
+        return resp.done();
+    }
+
+private:
+    score_collection& m_scores;
+
+    template <typename RESP>
+    static RESP init_resp(RESP resp) {
+        resp.append_header("Server", "RESTinio sample server /v.0.6")
+            .append_header_date_field()
+            .append_header("Content-Type", "application/json; charset=utf-8");
+
+        return resp;
+    }
+
+    template <typename RESP>
+    static void mark_as_bad_request(RESP& resp) {
+        resp.header().status_line(restinio::status_bad_request());
+    }
+};
+
+auto score_server_handler(score_collection& score_collection) {
+    auto router = std::make_unique<router_t>();
+    auto handler = std::make_shared<score_handler_t>(std::ref(score_collection));
+
+    auto by = [&](auto method) {
+        using namespace std::placeholders;
+        return std::bind(method, handler, _1, _2);
+    };
+
+    // Handlers for /score path.
+    router->http_post("/", by(&score_handler_t::on_new_score));
+
+    return router;
+}
+
+int main() {
+    using traits_t = restinio::traits_t<
+        restinio::asio_timer_manager_t,
+        restinio::single_threaded_ostream_logger_t,
+        router_t>;
+
+    score_collection score_collection;
+
+    try {
+        restinio::run(
+            restinio::on_this_thread<traits_t>()
+                .address("localhost")
+                .request_handler(score_server_handler(score_collection))
+                .read_next_http_message_timelimit(std::chrono::seconds(10))
+                .write_http_response_timelimit(std::chrono::seconds(1))
+                .handle_request_timeout(std::chrono::seconds(1)));
+    } catch (const std::exception& ex) {
+        std::cerr << "Error: " << ex.what() << std::endl;
+        return 1;
+    }
+
+    return 0;
+}
